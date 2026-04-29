@@ -1,11 +1,11 @@
 import streamlit as st
-from praisonaiagents import Agent, Agents, MCP
 from dotenv import load_dotenv
 import os
 import io
 import pandas as pd
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from prompt import prompt
+from ai_agents import create_agents
 # Add for PDF and image export
 from fpdf import FPDF
 from PIL import Image, ImageDraw, ImageFont
@@ -33,12 +33,22 @@ def authentication_page():
             if password == os.getenv("PASSWORD"):
                 # Use default keys from .env
                 default_groq = os.getenv("GROQ_API_KEY", "")
-                default_brave = os.getenv("BRAVE_API_KEY", "")
-                if not default_groq or not default_brave:
+                default_search_provider = os.getenv("SEARCH_PROVIDER", "firecrawl").lower()
+
+                if default_search_provider == "brave":
+                    default_api_key = os.getenv("BRAVE_API_KEY", "")
+                else:
+                    default_api_key = os.getenv("FIRECRAWL_API_KEY", "")
+
+                if not default_groq or not default_api_key:
                     st.error("Default API keys not found in .env. Please contact admin or use direct API key entry.")
                     st.stop()
                 st.session_state["GROQ_API_KEY"] = default_groq
-                st.session_state["BRAVE_API_KEY"] = default_brave
+                st.session_state["SEARCH_PROVIDER"] = default_search_provider
+                if default_search_provider == "brave":
+                    st.session_state["BRAVE_API_KEY"] = default_api_key
+                else:
+                    st.session_state["FIRECRAWL_API_KEY"] = default_api_key
                 st.session_state["authenticated"] = True
                 st.experimental_rerun()
             else:
@@ -47,14 +57,29 @@ def authentication_page():
     else:  # Enter API Keys Directly
         st.markdown("Enter your API keys:")
         groq_api_key = st.text_input("GROQ_API_KEY", type="password", key="groq_api_key_input")
-        brave_api_key = st.text_input("BRAVE_API_KEY", type="password", key="brave_api_key_input")
+
+        search_provider = st.selectbox(
+            "Search Provider",
+            ["firecrawl", "brave"],
+            key="search_provider_select"
+        )
+
+        if search_provider == "firecrawl":
+            search_api_key = st.text_input("FIRECRAWL_API_KEY", type="password", key="firecrawl_api_key_input")
+        else:
+            search_api_key = st.text_input("BRAVE_API_KEY", type="password", key="brave_api_key_input")
+
         submit_keys = st.button("Submit API Keys", key="submit_keys_btn", type="primary")
         if submit_keys:
-            if not groq_api_key or not brave_api_key:
+            if not groq_api_key or not search_api_key:
                 st.error("Both API keys are required.")
                 st.stop()
             st.session_state["GROQ_API_KEY"] = groq_api_key
-            st.session_state["BRAVE_API_KEY"] = brave_api_key
+            st.session_state["SEARCH_PROVIDER"] = search_provider
+            if search_provider == "brave":
+                st.session_state["BRAVE_API_KEY"] = search_api_key
+            else:
+                st.session_state["FIRECRAWL_API_KEY"] = search_api_key
             st.session_state["authenticated"] = True
             st.experimental_rerun()
 
@@ -63,15 +88,27 @@ def main_page():
     st.set_page_config(page_title="Travel LLM Agent", layout="wide")
     def get_api_keys():
         groq_api_key = st.session_state.get("GROQ_API_KEY", "")
-        brave_api_key = st.session_state.get("BRAVE_API_KEY", "")
-        if not groq_api_key or not brave_api_key:
+        search_provider = st.session_state.get("SEARCH_PROVIDER", "firecrawl")
+
+        if search_provider == "brave":
+            search_api_key = st.session_state.get("BRAVE_API_KEY", "")
+        else:
+            search_api_key = st.session_state.get("FIRECRAWL_API_KEY", "")
+
+        if not groq_api_key or not search_api_key:
             st.sidebar.error("API keys missing. Please restart and login again.")
             st.stop()
-        os.environ["GROQ_API_KEY"] = groq_api_key
-        os.environ["BRAVE_API_KEY"] = brave_api_key
-        return groq_api_key, brave_api_key
 
-    groq_api_key, brave_api_key = get_api_keys()
+        os.environ["GROQ_API_KEY"] = groq_api_key
+        os.environ["SEARCH_PROVIDER"] = search_provider
+        if search_provider == "brave":
+            os.environ["BRAVE_API_KEY"] = search_api_key
+        else:
+            os.environ["FIRECRAWL_API_KEY"] = search_api_key
+
+        return groq_api_key, search_api_key, search_provider
+
+    groq_api_key, search_api_key, search_provider = get_api_keys()
 
     # --- File Parsing Function ---
     def parse_uploaded_file(uploaded_file):
@@ -107,46 +144,13 @@ def main_page():
                 os.remove(temp_file_path)
             return "None (Error parsing file)"
 
-    # --- Agent Definitions ---
-    def create_agents(api_key, include_flight_agent=True, include_hotel_agent=True):
-        mcp_tool = MCP("npx -y @modelcontextprotocol/server-brave-search", env={"BRAVE_API_KEY": api_key})
-        llm_model = "groq/deepseek-r1-distill-llama-70b"
-        agents_list = []
-        research_agent = Agent(
-            instructions="Research travel destinations, attractions, local customs, travel requirements, and seasonal events. Gather detailed information about unique experiences, cultural significance, weather patterns, local transportation options, safety considerations, and visa requirements. Identify off-the-beaten-path attractions that align with user preferences while avoiding overcrowded tourist spots. Research local etiquette, tipping customs, and cultural sensitivities to enhance the traveler's experience.",
-            llm=llm_model,
-            tools=mcp_tool
-        )
-        agents_list.append(research_agent)
-        if include_flight_agent:
-            flight_agent = Agent(
-                instructions="Search for available flights, compare prices, and recommend optimal flight choices within the specified budget. Provide detailed information including airlines, flight numbers, departure/arrival times, layovers, baggage allowances, and total costs. Prioritize flights with the best balance of price, convenience, and comfort. Suggest alternative dates or nearby airports if they offer significant cost savings. Include booking platform recommendations and highlight any special offers or loyalty programs.",
-                llm=llm_model,
-                tools=mcp_tool
-            )
-            agents_list.append(flight_agent)
-        if include_hotel_agent:
-            hotel_agent = Agent(
-            instructions="Research hotels and accommodation options that precisely match the user's budget and stated preferences. Provide comprehensive details including hotel name, star rating, location convenience, room types, amenities (pool, spa, free breakfast, etc.), and approximate costs per night. Consider proximity to planned activities and transportation options. Include booking details, cancellation policies, and special offers. For luxury preferences, focus on high-end amenities and exceptional service; for budget constraints, prioritize value and essential comforts.",
-            llm=llm_model,
-                tools=mcp_tool
-            )
-            agents_list.append(hotel_agent)
-        planning_agent = Agent(
-            instructions="Design detailed day-by-day travel plans incorporating activities, transportation, dining, and adequate rest time. Create balanced itineraries with realistic timing that account for travel between locations. Avoid overscheduling and allow flexibility. For each day, include specific time blocks for activities, estimated travel times between locations, recommended restaurants with cuisine types and price ranges, and approximate costs for all components. Ensure the total daily and trip costs stay within budget. Suggest backup activities for weather contingencies and include local transportation recommendations. If existing plans are provided, identify inefficiencies and suggest improvements while preserving core elements.",
-            llm=llm_model,
-            tools=mcp_tool
-        )
-        agents_list.append(planning_agent)
-        return Agents(agents=agents_list)
-
     # --- Streamlit UI ---
     st.title("🌍 Travel Planning Assistant")
     st.markdown("Plan your next trip with the help of AI agents!")
     with st.sidebar:
         st.header("Trip Details")
         destination = st.text_input("Destination(s)", "Udaipur and Mount Abu")
-        dates = st.text_input("Travel Dates", "May 2 to May 6 2025")
+        dates = st.text_input("Travel Dates", "May 2 to May 6 2026")
         budget = st.text_input("Budget", "Total RS. 50000")
         preferences = st.text_area("Preferences", "Historical sites, local cuisine, luxury stay, avoiding crowded tourist traps")
         include_flights = st.checkbox("Include Flight Search?", value=True)
@@ -173,7 +177,7 @@ def main_page():
                 with st.expander("View Generated Prompt"):
                     st.code(travel_query, language='text')
                 travel_query += prompt
-                travel_agents = create_agents(brave_api_key, include_flight_agent=include_flights, include_hotel_agent=include_hotels)
+                travel_agents = create_agents(search_api_key, search_provider, include_flight_agent=include_flights, include_hotel_agent=include_hotels)
                 with st.spinner('Generating plan... This might take a moment.'):
                     result = travel_agents.start(travel_query)
                 st.success("Travel plan generated!")
