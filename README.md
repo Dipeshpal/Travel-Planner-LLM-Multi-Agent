@@ -1,14 +1,16 @@
 # Travel Planner LLM Multi-Agent
 
-A Streamlit web application that uses multiple AI agents powered by Groq (DeepSeek R1) and Brave Search to generate detailed, personalized day-by-day travel itineraries.
+A Streamlit web application that uses multiple AI agents to generate detailed, personalized day-by-day travel itineraries. Supports multiple LLM providers (Groq, Gemini, OpenRouter, OpenAI) and search backends (Firecrawl, Brave Search).
 
 ## Features
 
-- Multi-agent pipeline: research, flight search, hotel recommendations, and itinerary planning
-- Brave Search MCP integration for real-time web data
-- Upload existing plans (CSV, PDF, TXT) for the agents to refine
-- Export itinerary as Text, Markdown, HTML, PDF, or PNG image
-- Authentication via password (shared keys) or direct API key entry
+- **Multi-agent pipeline**: research, flight search, hotel recommendations, and itinerary planning
+- **Configurable search provider**: Choose between Firecrawl or Brave Search via `SEARCH_PROVIDER` env var
+- **Multi-provider LLM support**: Groq, Google Gemini, OpenRouter, or OpenAI — configure via `LLM_MODEL`
+- **Upload existing plans** (CSV, PDF, TXT) for the agents to refine
+- **Export itinerary** as Text, Markdown, HTML, PDF, or PNG image
+- **Authentication**: Password-based or direct API key entry
+- **Clean architecture**: Separated UI (Streamlit) and AI logic (agents)
 
 ## Architecture
 
@@ -17,27 +19,33 @@ User Input (Streamlit UI)
         │
         ▼
 ┌───────────────────┐
-│   Research Agent  │  ← Brave Search MCP
+│   Research Agent  │  ← Search Provider (Firecrawl/Brave)
 ├───────────────────┤
-│   Flight Agent    │  ← Brave Search MCP (optional)
+│   Flight Agent    │  ← Search Provider (optional)
 ├───────────────────┤
-│   Hotel Agent     │  ← Brave Search MCP (optional)
+│   Hotel Agent     │  ← Search Provider (optional)
 ├───────────────────┤
-│  Planning Agent   │  ← Brave Search MCP
+│  Planning Agent   │  ← Search Provider
 └───────────────────┘
         │
         ▼
-   Travel Itinerary (Markdown table)
+   Travel Itinerary
 ```
 
-All agents use the `groq/deepseek-r1-distill-llama-70b` model via [PraisonAI Agents](https://github.com/MervinPraison/PraisonAI).
+All agents use configurable LLM via [PraisonAI Agents](https://github.com/MervinPraison/PraisonAI) and [LiteLLM](https://github.com/BerriAI/litellm) for multi-provider support.
 
 ## Prerequisites
 
 - Python 3.10+
-- [Node.js](https://nodejs.org/) (for the Brave Search MCP server via `npx`)
-- A [Groq API key](https://console.groq.com/)
-- A [Brave Search API key](https://brave.com/search/api/)
+- [Node.js](https://nodejs.org/) (for MCP servers via `npx`)
+- At least one LLM API key:
+  - [Groq](https://console.groq.com/) (default)
+  - [Google Gemini](https://makersuite.google.com/app/apikey)
+  - [OpenRouter](https://openrouter.ai/keys)
+  - [OpenAI](https://platform.openai.com/api-keys)
+- At least one search provider API key:
+  - [Firecrawl](https://firecrawl.dev/app/api-keys) (recommended)
+  - [Brave Search](https://brave.com/search/api/)
 
 ## Setup
 
@@ -67,18 +75,33 @@ pip install -r requirements.txt
 Copy the example file and fill in your keys:
 
 ```bash
-cp .env_example .env
+cp .env.example .env
 ```
 
-Open `.env` and set the values:
+Edit `.env` with your API keys:
 
 ```env
-GROQ_API_KEY="gsk_..."        # Your Groq API key
-BRAVE_API_KEY="BSA..."        # Your Brave Search API key
-PASSWORD="your_password"      # Optional: shared password for the login page
+# Search Provider (firecrawl or brave)
+SEARCH_PROVIDER="firecrawl"
+FIRECRAWL_API_KEY="..."
+BRAVE_API_KEY=""              # Optional if using Firecrawl
+
+# LLM Configuration (groq, gemini, openrouter, or openai)
+LLM_MODEL="groq/deepseek-r1-distill-llama-70b"
+GROQ_API_KEY="gsk_..."
+GOOGLE_API_KEY=""             # For gemini/* models
+OPENROUTER_API_KEY=""         # For openrouter/* models
+OPENAI_API_KEY=""             # For openai/* models
+
+# Authentication
+PASSWORD="your_password"      # Optional: for "Use Password" login
 ```
 
-`PASSWORD` is only needed if you want to use the "Use Password" login method. You can leave it empty and log in by entering API keys directly in the UI.
+**Minimal setup**: You only need:
+- One **search provider** API key (Firecrawl recommended)
+- One **LLM API key** (Groq is free and fast)
+
+See `.env.example` for all supported models and how to get API keys.
 
 ## Running the App
 
@@ -105,20 +128,40 @@ The app will open at `http://localhost:8501` in your browser.
 
 ```
 travel-planner-llm-multi-agent/
-├── travel_agent.py   # Streamlit app — UI, agent definitions, export logic
-├── prompt.py         # System prompt that controls itinerary output format
-├── requirements.txt  # Python dependencies
-├── .env_example      # Environment variable template
-└── .gitignore
+├── travel_agent.py       # Streamlit UI, authentication, export logic
+├── ai_agents.py          # AI agent definitions and initialization
+├── prompt.py             # System prompt for itinerary format
+├── requirements.txt      # Python dependencies
+├── .env.example          # Environment variable template (all options)
+└── README.md
 ```
+
+**Separation of concerns:**
+- `travel_agent.py` — Streamlit UI and UX logic only
+- `ai_agents.py` — AI/LLM agent logic; reusable for other frontends
 
 ## Environment Variables Reference
 
-| Variable        | Required | Description                                      |
-|-----------------|----------|--------------------------------------------------|
-| `GROQ_API_KEY`  | Yes      | API key for Groq inference                       |
-| `BRAVE_API_KEY` | Yes      | API key for Brave Search (used by MCP server)    |
-| `PASSWORD`      | No       | Shared login password for the "Use Password" flow |
+### Search Provider
+| Variable              | Required | Description                                    |
+|----------------------|----------|------------------------------------------------|
+| `SEARCH_PROVIDER`    | No       | `firecrawl` (default) or `brave`               |
+| `FIRECRAWL_API_KEY`  | if using Firecrawl | API key from https://firecrawl.dev       |
+| `BRAVE_API_KEY`      | if using Brave     | API key from https://brave.com/search/api |
+
+### LLM Model
+| Variable           | Required | Description                                                 |
+|--------------------|----------|-------------------------------------------------------------|
+| `LLM_MODEL`        | No       | Format: `provider/model` (see `.env.example` for examples) |
+| `GROQ_API_KEY`     | if using Groq      | API key from https://console.groq.com                |
+| `GOOGLE_API_KEY`   | if using Gemini    | API key from https://makersuite.google.com/app/apikey |
+| `OPENROUTER_API_KEY` | if using OpenRouter | API key from https://openrouter.ai/keys              |
+| `OPENAI_API_KEY`   | if using OpenAI    | API key from https://platform.openai.com/api-keys    |
+
+### Authentication
+| Variable   | Required | Description                               |
+|-----------|----------|-------------------------------------------|
+| `PASSWORD` | No       | Shared password for "Use Password" login  |
 
 ## Troubleshooting
 
@@ -126,6 +169,14 @@ travel-planner-llm-multi-agent/
 
 **`ModuleNotFoundError`** — Ensure your virtual environment is activated and `pip install -r requirements.txt` completed without errors.
 
-**API key errors** — Double-check that `.env` contains valid, non-expired keys and that the file is in the project root.
+**LLM authentication error** — Verify the correct API key is set for your chosen provider:
+- For `groq/*` models: set `GROQ_API_KEY`
+- For `gemini/*` models: set `GOOGLE_API_KEY`
+- For `openrouter/*` models: set `OPENROUTER_API_KEY`
+- For `openai/*` models: set `OPENAI_API_KEY`
+
+**Search provider error** — Make sure `SEARCH_PROVIDER` is set to `firecrawl` or `brave`, and the corresponding API key is valid.
 
 **Slow generation** — The multi-agent pipeline makes multiple web searches; generation typically takes 30–90 seconds depending on query complexity and API latency.
+
+**Provider not found** — Check that the model format in `LLM_MODEL` is correct. See `.env.example` for supported formats and examples.
